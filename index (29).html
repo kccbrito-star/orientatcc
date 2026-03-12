@@ -1,0 +1,1707 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fichas TCC — Pedagogia UFT Palmas</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<!-- Firebase SDK -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+         signOut, onAuthStateChanged, updateProfile, sendPasswordResetEmail }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, doc, setDoc, getDoc, addDoc, updateDoc, deleteDoc,
+         collection, query, where, onSnapshot, serverTimestamp, getDocs }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// ════════════════════════════════════════════════════
+// 🔧 CONFIGURAÇÃO FIREBASE — SUBSTITUA PELOS SEUS DADOS
+// ════════════════════════════════════════════════════
+const firebaseConfig = {
+  apiKey: "AIzaSyBWdvqJ52SdLDOgcV_1JbK-GsbWSP1JtrE",
+  authDomain: "fichas-tcc-uft-88f5b.firebaseapp.com",
+  projectId: "fichas-tcc-uft-88f5b",
+  storageBucket: "fichas-tcc-uft-88f5b.firebasestorage.app",
+  messagingSenderId: "364139384085",
+  appId: "1:364139384085:web:abd2d0c9c3712ed97b6d1c"
+};
+// ════════════════════════════════════════════════════
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+let currentUser = null;
+let currentUserData = null;
+
+// ── AUTH STATE ──────────────────────────────────────
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    currentUser = user;
+    const snap = await getDoc(doc(db, "usuarios", user.uid));
+    currentUserData = snap.exists() ? snap.data() : null;
+    showApp();
+    atualizarUI(currentUserData);
+    loadDashboard();
+  } else {
+    currentUser = null;
+    currentUserData = null;
+    showLogin();
+  }
+});
+
+function atualizarUI(data) {
+  if (!data) return;
+  _aplicarUI(data);
+}
+function _aplicarUI(data) {
+  const chip = document.getElementById('user-name-chip');
+  const lbl  = document.getElementById('user-tipo-label');
+
+  if (data.tipo === 'professor') {
+    if (chip) chip.textContent = data.nome + ' (Prof.)';
+    if (lbl)  lbl.textContent  = 'Visão do Professor Orientador';
+    const nb  = document.getElementById('btn-nova-ficha');
+    const nb2 = document.getElementById('btn-nova-ficha2');
+    const na  = document.getElementById('nav-alunos');
+    const ns  = document.getElementById('nav-sec-admin');
+    if (nb)  nb.style.display  = 'inline-flex';
+    if (nb2) nb2.style.display = 'inline-flex';
+    if (na)  na.style.display  = 'flex';
+    if (ns)  ns.style.display  = 'block';
+  } else if (data.tipo === 'coordenador') {
+    if (chip) chip.textContent = data.nome + ' (Coord.)';
+    if (lbl)  lbl.textContent  = 'Visão da Coordenação — acesso total';
+    const bc  = document.getElementById('btns-coord');
+    const ns  = document.getElementById('nav-sec-admin');
+    const na  = document.getElementById('nav-alunos');
+    const np  = document.getElementById('nav-professores');
+    if (bc)  bc.style.display  = 'flex';
+    if (ns)  ns.style.display  = 'block';
+    if (na)  na.style.display  = 'flex';
+    if (np)  np.style.display  = 'flex';
+  } else {
+    if (chip) chip.textContent = data.nome + ' (Aluno)';
+    if (lbl)  lbl.textContent  = 'Visão do Aluno';
+  }
+}
+
+// ── LOGIN ───────────────────────────────────────────
+window.fazerLogin = async () => {
+  const email = v("login-email");
+  const senha = v("login-senha");
+  setErr("login-err", "");
+  setBtnLoad("btn-login", true, "Entrando...");
+  try {
+    await signInWithEmailAndPassword(auth, email, senha);
+  } catch(e) {
+    setErr("login-err", traduzErro(e.code));
+    setBtnLoad("btn-login", false, "Entrar");
+  }
+};
+
+window.fazerCadastro = async () => {
+  const nome  = v("cad-nome");
+  const email = v("cad-email");
+  const senha = v("cad-senha");
+  const tipo  = v("cad-tipo");
+  const codinst = v("cad-codigo");
+  setErr("cad-err", "");
+
+  if (!nome || !email || !senha) { setErr("cad-err", "Preencha todos os campos."); return; }
+  if (tipo === "professor" && codinst !== "UFT2025") {
+    setErr("cad-err", "Código de professor inválido. Solicite ao coordenador.");
+    return;
+  }
+  if (tipo === "coordenador" && codinst !== "COORD2025") {
+    setErr("cad-err", "Código de coordenador inválido.");
+    return;
+  }
+  setBtnLoad("btn-cad", true, "Criando conta...");
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, senha);
+    await updateProfile(cred.user, { displayName: nome });
+    const userData = { nome, email, tipo, uid: cred.user.uid, criadoEm: serverTimestamp() };
+    await setDoc(doc(db, "usuarios", cred.user.uid), userData);
+    currentUserData = userData;
+    atualizarUI(userData);
+  } catch(e) {
+    setErr("cad-err", traduzErro(e.code));
+    setBtnLoad("btn-cad", false, "Criar conta");
+  }
+};
+
+window.fazerLogout = () => signOut(auth);
+
+window.recuperarSenha = async () => {
+  const email = v("login-email");
+  if (!email) { setErr("login-err", "Digite seu e-mail antes de recuperar a senha."); return; }
+  setBtnLoad("btn-recuperar", true, "Enviando...");
+  try {
+    await sendPasswordResetEmail(auth, email);
+    setErr("login-err", "");
+    el("login-err").style.color = "var(--g)";
+    setErr("login-err", "✅ E-mail de recuperação enviado! Verifique sua caixa de entrada.");
+  } catch(e) {
+    el("login-err").style.color = "var(--red)";
+    setErr("login-err", traduzErro(e.code));
+  }
+  setBtnLoad("btn-recuperar", false, "Esqueci minha senha");
+};
+
+// ── FICHAS ──────────────────────────────────────────
+window.criarFicha = async () => {
+  const titulo = v("nf-titulo");
+  const alunoId = v("nf-aluno-id");
+  const tipo = v("nf-tipo");
+  const semestre = v("nf-semestre");
+  if (!titulo || !alunoId) { setErr("nf-err", "Preencha título e selecione um aluno."); return; }
+
+  const alunoSnap = await getDoc(doc(db, "usuarios", alunoId));
+  const alunoData = alunoSnap.data();
+
+  setBtnLoad("btn-nf", true, "Criando...");
+  try {
+    await addDoc(collection(db, "fichas"), {
+      titulo, tipo, semestre,
+      professorId: currentUser.uid,
+      professorNome: currentUserData.nome,
+      alunoId,
+      alunoNome: alunoData.nome,
+      alunoEmail: alunoData.email,
+      aceite: { data: null, professorCiente: false, alunoCiente: false,
+                professorCienteEm: null, alunoCienteEm: null },
+      encerramento: { data: null, professorCiente: false, alunoCiente: false,
+                      professorCienteEm: null, alunoCienteEm: null },
+      criadoEm: serverTimestamp(),
+      status: "ativo"
+    });
+    closeModal("modalNovaFicha");
+    v("nf-titulo", "");
+    limparBuscaAluno();
+    loadFichas();
+    loadDashboard();
+  } catch(e) {
+    setErr("nf-err", "Erro ao criar: " + e.message);
+  }
+  setBtnLoad("btn-nf", false, "Criar Ficha");
+};
+
+window.registrarOrientacao = async () => {
+  const fichaId = v("ori-fichaId");
+  const data = v("ori-data");
+  const assunto = v("ori-assunto");
+  const modalidade = v("ori-modalidade");
+  const encaminhamentos = v("ori-enc");
+  if (!data || !assunto) { setErr("ori-err", "Data e assunto são obrigatórios."); return; }
+
+  setBtnLoad("btn-ori", true, "Salvando...");
+  try {
+    await addDoc(collection(db, "fichas", fichaId, "orientacoes"), {
+      data, assunto, modalidade, encaminhamentos,
+      professorCiente: true,
+      professorCienteEm: new Date().toISOString(),
+      professorNome: currentUserData.nome,
+      alunoCiente: false,
+      alunoCienteEm: null,
+      criadoEm: serverTimestamp()
+    });
+    closeModal("modalOrientacao");
+    setErr("ori-err", "");
+    v("ori-assunto", "");
+    v("ori-enc", "");
+    verFicha(fichaId);
+  } catch(e) {
+    setErr("ori-err", "Erro: " + e.message);
+  }
+  setBtnLoad("btn-ori", false, "Registrar");
+};
+
+window.darCienciaOrientacao = async (fichaId, oriId) => {
+  const oriRef = doc(db, "fichas", fichaId, "orientacoes", oriId);
+  const isProf = currentUserData.tipo === "professor" || currentUserData.tipo === "coordenador";
+  const campo = isProf ? "professorCiente" : "alunoCiente";
+  const campoEm = isProf ? "professorCienteEm" : "alunoCienteEm";
+  const campoNome = isProf ? "professorNome" : "alunoNome";
+  await updateDoc(oriRef, {
+    [campo]: true,
+    [campoEm]: new Date().toISOString(),
+    [campoNome]: currentUserData.nome
+  });
+  verFicha(fichaId);
+};
+
+window.darCienciaAceite = async (fichaId, etapa) => {
+  const fichaRef = doc(db, "fichas", fichaId);
+  const isProf2 = currentUserData.tipo === "professor" || currentUserData.tipo === "coordenador";
+  const campo = isProf2 ? `${etapa}.professorCiente` : `${etapa}.alunoCiente`;
+  const campoEm = isProf2 ? `${etapa}.professorCienteEm` : `${etapa}.alunoCienteEm`;
+  await updateDoc(fichaRef, {
+    [campo]: true,
+    [campoEm]: new Date().toISOString(),
+  });
+  verFicha(fichaId);
+};
+
+window.salvarDataAceite = async (fichaId, etapa, val) => {
+  await updateDoc(doc(db, "fichas", fichaId), { [`${etapa}.data`]: val });
+};
+
+// ── CARREGAR DADOS ──────────────────────────────────
+let fichaAtualId = null;
+window.fichaAtualId = null;
+
+async function loadDashboard() {
+  if (!currentUserData) return;
+  let fichas;
+  if (currentUserData.tipo === "coordenador") {
+    const snap = await getDocs(collection(db, "fichas"));
+    fichas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } else {
+    const campo = currentUserData.tipo === "professor" ? "professorId" : "alunoId";
+    const q = query(collection(db, "fichas"), where(campo, "==", currentUser.uid));
+    const snap = await getDocs(q);
+    fichas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+
+  el("st-fichas").textContent = fichas.length;
+
+  let totalOri = 0, pendentes = 0;
+  for (const f of fichas) {
+    const oriSnap = await getDocs(collection(db, "fichas", f.id, "orientacoes"));
+    totalOri += oriSnap.size;
+    oriSnap.docs.forEach(o => {
+      const d = o.data();
+      if (!d.professorCiente || !d.alunoCiente) pendentes++;
+    });
+  }
+  el("st-ori").textContent = totalOri;
+  el("st-pend").textContent = pendentes;
+  el("badge-pend").textContent = pendentes || "";
+
+  renderFichaCards(fichas, "dash-fichas");
+}
+
+async function loadFichas() {
+  let fichas;
+  if (currentUserData.tipo === "coordenador") {
+    const snap = await getDocs(collection(db, "fichas"));
+    fichas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } else {
+    const campo = currentUserData.tipo === "professor" ? "professorId" : "alunoId";
+    const q = query(collection(db, "fichas"), where(campo, "==", currentUser.uid));
+    const snap = await getDocs(q);
+    fichas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+  renderFichaCards(fichas, "fichas-list");
+}
+
+window.loadAlunos = async function loadAlunos() {
+  const q = query(collection(db, "usuarios"), where("tipo", "==", "aluno"));
+  const snap = await getDocs(q);
+  const alunos = snap.docs.map(d => ({ uid: d.id, id: d.id, ...d.data() }));
+  renderAlunoList(alunos);
+
+  // select removido — busca agora é por campo de texto
+}
+
+window.loadPendentes = async function loadPendentes() {
+  let fichas;
+  if (currentUserData.tipo === "coordenador") {
+    const snap = await getDocs(collection(db, "fichas"));
+    fichas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } else {
+    const campo = currentUserData.tipo === "professor" ? "professorId" : "alunoId";
+    const q = query(collection(db, "fichas"), where(campo, "==", currentUser.uid));
+    const snap = await getDocs(q);
+    fichas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+
+  const container = el("pendentes-list");
+  container.innerHTML = "";
+  let found = false;
+
+  for (const f of fichas) {
+    const oriSnap = await getDocs(collection(db, "fichas", f.id, "orientacoes"));
+    oriSnap.docs.forEach(oDoc => {
+      const o = { id: oDoc.id, ...oDoc.data() };
+      if (!o.professorCiente || !o.alunoCiente) {
+        found = true;
+        container.innerHTML += pendCard(f, o);
+      }
+    });
+  }
+  if (!found) container.innerHTML = emptyHTML("✅", "Nenhum registro pendente de ciência!");
+}
+
+window.verFicha = async (fichaId) => {
+  fichaAtualId = fichaId;
+  window.fichaAtualId = fichaId;
+  console.log("fichaAtualId definido:", fichaId);
+  // Atualizar data-id nos botões estáticos
+  const _bEd = document.getElementById('btn-editar-ficha');
+  const _bEx = document.getElementById('btn-excluir-ficha');
+  if (_bEd) _bEd.setAttribute('data-id', fichaId);
+  if (_bEx) _bEx.setAttribute('data-id', fichaId);
+  showPage("ficha-detail");
+  // Mostrar botões de edição para professor e coordenador
+  const podeEditar = currentUserData?.tipo === "professor" || currentUserData?.tipo === "coordenador";
+  const btnEd = el("btn-editar-ficha"); const btnEx = el("btn-excluir-ficha");
+  if (btnEd) btnEd.style.display = podeEditar ? "inline-flex" : "none";
+  if (btnEx) btnEx.style.display = podeEditar ? "inline-flex" : "none";
+  const fichaSnap = await getDoc(doc(db, "fichas", fichaId));
+  const f = { id: fichaSnap.id, ...fichaSnap.data() };
+  const oriSnap = await getDocs(collection(db, "fichas", fichaId, "orientacoes"));
+  const orientacoes = oriSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => a.data?.localeCompare(b.data));
+
+  const isProf = currentUserData.tipo === "professor" || currentUserData.tipo === "coordenador";
+  const aceiteOk = f.aceite?.professorCiente && f.aceite?.alunoCiente;
+  const encOk = f.encerramento?.professorCiente && f.encerramento?.alunoCiente;
+
+  el("ficha-detail-body").innerHTML = fichaDetailHTML(f, orientacoes, isProf, aceiteOk, encOk);
+};
+
+// ── RENDER ──────────────────────────────────────────
+window.renderFichaCards = function renderFichaCards(fichas, containerId) {
+  const c = el(containerId);
+  if (!c) return;
+  if (!fichas.length) { c.innerHTML = emptyHTML("📋", "Nenhuma ficha encontrada."); return; }
+  c.innerHTML = fichas.map(fichaCardHTML).join("");
+}
+
+function fichaCardHTML(f) {
+  const aceiteOk = f.aceite?.professorCiente && f.aceite?.alunoCiente;
+  const encOk = f.encerramento?.professorCiente && f.encerramento?.alunoCiente;
+  const ini = (f.alunoNome || "??").split(" ").map(x => x[0]).slice(0, 2).join("").toUpperCase();
+  return `<div class="fcard" onclick="verFicha('${f.id}')">
+    <div class="fcard-left">
+      <div class="avatar">${ini}</div>
+      <div>
+        <div class="fcard-nome">${f.alunoNome || "—"}</div>
+        <div class="fcard-prof">Orientador: ${f.professorNome || "—"}</div>
+        <div class="fcard-tema">${f.titulo}</div>
+        <div class="fcard-tags">
+          <span class="tag tag-blue">${f.tipo}</span>
+          <span class="tag tag-gray">${f.semestre}</span>
+          ${aceiteOk ? '<span class="tag tag-green">✓ Aceite</span>' : '<span class="tag tag-gold">Aceite pendente</span>'}
+          ${encOk ? '<span class="tag tag-green">✓ Encerrado</span>' : ""}
+        </div>
+      </div>
+    </div>
+    <div class="fcard-arrow">›</div>
+  </div>`;
+}
+
+window.fichaDetailHTML = function fichaDetailHTML(f, orientacoes, isProf, aceiteOk, encOk) {
+  const meuCienceAceite = isProf ? f.aceite?.professorCiente : f.aceite?.alunoCiente;
+  const meuCienceEnc    = isProf ? f.encerramento?.professorCiente : f.encerramento?.alunoCiente;
+
+  const sigBox = (ok, em, nome, fichaId, etapa, label) => {
+    if (ok) return `<div class="sig-box signed">✓ ${nome || "Confirmado"}<br><small>${fmtDT(em)}</small></div>`;
+    return `<div class="sig-box" onclick="darCienciaAceite('${fichaId}','${etapa}')">🖊 ${label}</div>`;
+  };
+
+  const oriRows = orientacoes.length ? `
+    <table class="ori-table">
+      <thead><tr>
+        <th>Data</th><th>Modalidade</th><th>Assunto</th><th>Encaminhamentos</th>
+        <th>Ciência Prof.</th><th>Ciência Aluno</th>
+      </tr></thead>
+      <tbody>${orientacoes.map(o => {
+        const pcOk = o.professorCiente;
+        const acOk = o.alunoCiente;
+        const podeCiencia = (isProf && !pcOk) || (!isProf && !acOk);
+        const campo = isProf ? "professorCiente" : "alunoCiente";
+        return `<tr>
+          <td style="white-space:nowrap">${fmtD(o.data)}</td>
+          <td><span class="tag tag-gray">${o.modalidade}</span></td>
+          <td>${o.assunto}</td>
+          <td style="font-size:.8rem;color:#666">${o.encaminhamentos || "—"}</td>
+          <td style="text-align:center">
+            ${pcOk
+              ? `<span class="mini-sig ok" title="${fmtDT(o.professorCienteEm)}">✓</span>`
+              : (isProf ? `<button class="mini-sig" onclick="darCienciaOrientacao('${f.id}','${o.id}')">Ciente</button>` : `<span class="mini-sig pend">—</span>`)}
+          </td>
+          <td style="text-align:center">
+            ${acOk
+              ? `<span class="mini-sig ok" title="${fmtDT(o.alunoCienteEm)}">✓</span>`
+              : (!isProf ? `<button class="mini-sig" onclick="darCienciaOrientacao('${f.id}','${o.id}')">Ciente</button>` : `<span class="mini-sig pend">—</span>`)}
+          </td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>` : emptyHTML("📝", "Nenhuma orientação registrada ainda.");
+
+  return `
+  <div class="fd-header">
+    <div class="fd-grid">
+      <div><div class="fd-lbl">Aluno</div><div class="fd-val">${f.alunoNome}</div><div class="fd-sub">${f.alunoEmail}</div></div>
+      <div><div class="fd-lbl">Orientador</div><div class="fd-val">${f.professorNome}</div></div>
+      <div><div class="fd-lbl">Tipo / Semestre</div><div class="fd-val">${f.tipo} — ${f.semestre}</div></div>
+      <div class="fd-full"><div class="fd-lbl">Título Provisório</div><div class="fd-val" style="font-style:italic">${f.titulo}</div></div>
+    </div>
+  </div>
+
+  <!-- ACEITE -->
+  <div class="etapa-block">
+    <div class="etapa-hdr">
+      <div class="etapa-num">1</div>
+      <div class="etapa-title">Aceite da Orientação</div>
+      <div class="etapa-status">${aceiteOk ? '<span class="tag tag-green">✓ Completo</span>' : '<span class="tag tag-gold">Pendente</span>'}</div>
+    </div>
+    <div class="etapa-body">
+      <div class="aceite-row">
+        <div class="aceite-date">
+          <label>Data</label>
+          <input type="date" value="${f.aceite?.data || ""}" onchange="salvarDataAceite('${f.id}','aceite',this.value)">
+        </div>
+        ${sigBox(f.aceite?.professorCiente, f.aceite?.professorCienteEm, f.professorNome, f.id, "aceite", "Confirmar — Professor")}
+        ${sigBox(f.aceite?.alunoCiente, f.aceite?.alunoCienteEm, f.alunoNome, f.id, "aceite", "Confirmar — Aluno")}
+      </div>
+    </div>
+  </div>
+
+  <!-- ORIENTAÇÕES -->
+  <div class="etapa-block">
+    <div class="etapa-hdr">
+      <div class="etapa-num">2</div>
+      <div class="etapa-title">Registro das Orientações</div>
+      <div class="etapa-status"><span class="tag tag-blue">${orientacoes.length} registro(s)</span></div>
+    </div>
+    <div class="etapa-body">
+      ${oriRows}
+      ${isProf ? `<button class="add-row-btn" onclick="abrirModalOrientacao('${f.id}')">+ Registrar nova orientação</button>` : ""}
+    </div>
+  </div>
+
+  <!-- ENCERRAMENTO -->
+  <div class="etapa-block">
+    <div class="etapa-hdr">
+      <div class="etapa-num">3</div>
+      <div class="etapa-title">Encerramento</div>
+      <div class="etapa-status">${encOk ? '<span class="tag tag-green">✓ Encerrado</span>' : '<span class="tag tag-gray">Aguardando</span>'}</div>
+    </div>
+    <div class="etapa-body">
+      <div class="aceite-row">
+        <div class="aceite-date">
+          <label>Data</label>
+          <input type="date" value="${f.encerramento?.data || ""}" onchange="salvarDataAceite('${f.id}','encerramento',this.value)">
+        </div>
+        ${sigBox(f.encerramento?.professorCiente, f.encerramento?.professorCienteEm, f.professorNome, f.id, "encerramento", "Confirmar — Professor")}
+        ${sigBox(f.encerramento?.alunoCiente, f.encerramento?.alunoCienteEm, f.alunoNome, f.id, "encerramento", "Confirmar — Aluno")}
+      </div>
+    </div>
+  </div>`;
+}
+
+window.pendCard = function pendCard(f, o) {
+  const isProf = currentUserData.tipo === "professor" || currentUserData.tipo === "coordenador";
+  return `<div class="fcard">
+    <div class="fcard-left">
+      <div class="avatar" style="background:#C8A84B;color:#006B3C">${f.alunoNome?.split(" ").map(x=>x[0]).slice(0,2).join("").toUpperCase()}</div>
+      <div>
+        <div class="fcard-nome">${f.alunoNome}</div>
+        <div class="fcard-prof">Reunião em ${fmtD(o.data)} · ${o.modalidade}</div>
+        <div class="fcard-tema">${o.assunto}</div>
+        <div class="fcard-tags">
+          ${!o.professorCiente ? '<span class="tag tag-red">Professor pendente</span>' : '<span class="tag tag-green">✓ Prof. ciente</span>'}
+          ${!o.alunoCiente ? '<span class="tag tag-red">Aluno pendente</span>' : '<span class="tag tag-green">✓ Aluno ciente</span>'}
+        </div>
+      </div>
+    </div>
+    <button class="btn btn-green" style="font-size:.78rem" onclick="darCienciaOrientacao('${f.id}','${o.id}');loadPendentes()">Dar minha ciência</button>
+  </div>`;
+}
+
+window.renderAlunoList = function renderAlunoList(alunos) {
+  const c = el("aluno-list");
+  if (!c) return;
+  if (!alunos.length) { c.innerHTML = emptyHTML("🎓", "Nenhum aluno cadastrado ainda."); return; }
+  const isCoord = currentUserData?.tipo === "coordenador";
+  c.innerHTML = alunos.map(a => `<div class="fcard" style="cursor:default">
+    <div class="fcard-left">
+      <div class="avatar" style="background:#1a5caa">${a.nome?.split(" ").map(x=>x[0]).slice(0,2).join("").toUpperCase()}</div>
+      <div>
+        <div class="fcard-nome">${a.nome}</div>
+        <div class="fcard-prof">${a.email}</div>
+        <div class="fcard-tags"><span class="tag tag-blue">Aluno</span></div>
+      </div>
+    </div>
+    ${isCoord ? `<div style="display:flex;gap:.4rem">
+      <button class="btn btn-outline btn-sm"
+        data-uid="${a.uid}" data-nome="${a.nome?.replace(/"/g,'&quot;')}" data-email="${a.email}" data-tipo="aluno"
+        onclick="abrirEditarUsuarioBtn(this)">✏️ Editar</button>
+      <button class="btn btn-sm" style="background:#fdecea;color:#c0392b;border:1px solid #f5c6cb"
+        data-uid="${a.uid}" data-nome="${a.nome?.replace(/"/g,'&quot;')}" data-tipo="aluno"
+        onclick="excluirUsuarioBtn(this)">🗑️ Excluir</button>
+    </div>` : ""}
+  </div>`).join("");
+}
+
+window.loadProfessores = async function loadProfessores() {
+  const q = query(collection(db, "usuarios"), where("tipo", "==", "professor"));
+  const snap = await getDocs(q);
+  const profs = snap.docs.map(d => ({ uid: d.id, id: d.id, ...d.data() }));
+  const c = el("prof-list");
+  if (!c) return;
+  if (!profs.length) { c.innerHTML = emptyHTML("👩‍🏫", "Nenhum professor cadastrado ainda."); return; }
+
+  // Para cada professor, buscar quantas fichas tem
+  c.innerHTML = "";
+  for (const p of profs) {
+    const qF = query(collection(db, "fichas"), where("professorId", "==", p.uid));
+    const sF = await getDocs(qF);
+    c.innerHTML += `<div class="fcard" style="cursor:default">
+      <div class="fcard-left">
+        <div class="avatar" style="background:#1F4E79">${p.nome?.split(" ").map(x=>x[0]).slice(0,2).join("").toUpperCase()}</div>
+        <div>
+          <div class="fcard-nome">${p.nome}</div>
+          <div class="fcard-prof">${p.email}</div>
+          <div class="fcard-tags">
+            <span class="tag tag-blue">Professor</span>
+            <span class="tag tag-green">${sF.size} ficha(s)</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:.4rem">
+        <button class="btn btn-outline btn-sm" onclick="filtrarFichasPorProf('${p.uid}','${p.nome}')">📋 Ver fichas</button>
+        <button class="btn btn-outline btn-sm"
+          data-uid="${p.uid}" data-nome="${p.nome?.replace(/"/g,'&quot;')}" data-email="${p.email}" data-tipo="professor"
+          onclick="abrirEditarUsuarioBtn(this)">✏️ Editar</button>
+        <button class="btn btn-sm" style="background:#fdecea;color:#c0392b;border:1px solid #f5c6cb"
+          data-uid="${p.uid}" data-nome="${p.nome?.replace(/"/g,'&quot;')}" data-tipo="professor"
+          onclick="excluirUsuarioBtn(this)">🗑️ Excluir</button>
+      </div>
+    </div>`;
+  }
+}
+
+window.filtrarFichasPorProf = async (profId, profNome) => {
+  const q = query(collection(db, "fichas"), where("professorId", "==", profId));
+  const snap = await getDocs(q);
+  const fichas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  showPage("fichas");
+  const c = el("fichas-list");
+  if (c) {
+    const hdr = document.querySelector("#page-fichas .page-title");
+    if (hdr) hdr.textContent = "Fichas de " + profNome;
+    renderFichaCards(fichas, "fichas-list");
+  }
+};
+
+
+// ══════════════════════════════════════════
+// IMPRESSÃO E PDF
+// ══════════════════════════════════════════
+
+function gerarHTMLFicha(f, orientacoes) {
+  const fmt = (d) => { if (!d) return "___/___/______"; const [y,m,day]=d.split("-"); return `${day}/${m}/${y}`; };
+  const fmtDT = (iso) => { if (!iso) return ""; const d=new Date(iso); return d.toLocaleDateString("pt-BR")+" "+d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}); };
+  const sigLinha = (ok, nome, em) => ok
+    ? `<td style="border:1px solid #aaa;padding:6px 10px;font-size:10pt;text-align:center">
+        <div style="font-size:8pt;color:#555">Confirmado em ${fmtDT(em)}</div>
+        <div style="font-weight:bold">${nome||"—"}</div>
+       </td>`
+    : `<td style="border:1px solid #aaa;padding:6px 10px;font-size:10pt;text-align:center">
+        <div style="height:28px;border-bottom:1px solid #333;margin-bottom:4px"></div>
+        <div style="font-size:9pt;color:#777">Assinatura / Data</div>
+       </td>`;
+
+  const oriRows = orientacoes.length
+    ? orientacoes.map(o => `<tr>
+        <td style="border:1px solid #ccc;padding:5px 8px">${fmt(o.data)}</td>
+        <td style="border:1px solid #ccc;padding:5px 8px">${o.modalidade}</td>
+        <td style="border:1px solid #ccc;padding:5px 8px">${o.assunto}</td>
+        <td style="border:1px solid #ccc;padding:5px 8px;font-size:9pt;color:#555">${o.encaminhamentos||"—"}</td>
+        <td style="border:1px solid #ccc;padding:5px 8px;text-align:center">${o.professorCiente?"✓ "+fmtDT(o.professorCienteEm):"Pendente"}</td>
+        <td style="border:1px solid #ccc;padding:5px 8px;text-align:center">${o.alunoCiente?"✓ "+fmtDT(o.alunoCienteEm):"Pendente"}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="6" style="border:1px solid #ccc;padding:10px;text-align:center;color:#777">Nenhuma orientação registrada</td></tr>`;
+
+  return `
+  <div style="font-family:Arial,sans-serif;font-size:11pt;color:#000;max-width:100%">
+    <!-- Cabeçalho -->
+    <div style="text-align:center;margin-bottom:18px;border-bottom:2px solid #006B3C;padding-bottom:12px">
+      <div style="font-size:10pt;color:#555">UNIVERSIDADE FEDERAL DO TOCANTINS — UFT</div>
+      <div style="font-size:10pt;color:#555">Curso de Pedagogia — Campus Palmas</div>
+      <div style="font-size:15pt;font-weight:bold;margin-top:6px;color:#006B3C">FICHA DE ORIENTAÇÃO DE TCC</div>
+      <div style="font-size:9pt;color:#777;margin-top:2px">${f.tipo} · ${f.semestre}</div>
+    </div>
+
+    <!-- Dados -->
+    <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+      <tr>
+        <td style="border:1px solid #aaa;padding:7px 10px;width:15%;font-weight:bold;font-size:10pt;background:#f0f0f0">Aluno</td>
+        <td style="border:1px solid #aaa;padding:7px 10px">${f.alunoNome} &nbsp;<span style="color:#555;font-size:9pt">${f.alunoEmail}</span></td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #aaa;padding:7px 10px;font-weight:bold;font-size:10pt;background:#f0f0f0">Orientador</td>
+        <td style="border:1px solid #aaa;padding:7px 10px">${f.professorNome}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #aaa;padding:7px 10px;font-weight:bold;font-size:10pt;background:#f0f0f0">Título</td>
+        <td style="border:1px solid #aaa;padding:7px 10px;font-style:italic">${f.titulo}</td>
+      </tr>
+    </table>
+
+    <!-- Etapa 1: Aceite -->
+    <div style="font-weight:bold;font-size:12pt;color:#006B3C;margin:14px 0 6px;border-left:4px solid #006B3C;padding-left:8px">1. Aceite da Orientação</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+      <tr>
+        <td style="border:1px solid #aaa;padding:7px 10px;width:25%;font-weight:bold;background:#f0f0f0">Data do Aceite</td>
+        <td style="border:1px solid #aaa;padding:7px 10px">${fmt(f.aceite?.data)}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #aaa;padding:7px 10px;font-weight:bold;background:#f0f0f0">Ciências</td>
+        <table style="width:100%;border-collapse:collapse"><tr>
+          ${sigLinha(f.aceite?.professorCiente, "Professor: "+f.professorNome, f.aceite?.professorCienteEm)}
+          ${sigLinha(f.aceite?.alunoCiente, "Aluno: "+f.alunoNome, f.aceite?.alunoCienteEm)}
+        </tr></table>
+      </tr>
+    </table>
+
+    <!-- Etapa 2: Orientações -->
+    <div style="font-weight:bold;font-size:12pt;color:#006B3C;margin:14px 0 6px;border-left:4px solid #006B3C;padding-left:8px">2. Registro das Orientações</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:10pt">
+      <thead>
+        <tr style="background:#f0f0f0">
+          <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Data</th>
+          <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Modalidade</th>
+          <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Assunto</th>
+          <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Encaminhamentos</th>
+          <th style="border:1px solid #aaa;padding:6px 8px;text-align:center">Ciência Prof.</th>
+          <th style="border:1px solid #aaa;padding:6px 8px;text-align:center">Ciência Aluno</th>
+        </tr>
+      </thead>
+      <tbody>${oriRows}</tbody>
+    </table>
+
+    <!-- Etapa 3: Encerramento -->
+    <div style="font-weight:bold;font-size:12pt;color:#006B3C;margin:14px 0 6px;border-left:4px solid #006B3C;padding-left:8px">3. Encerramento</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+      <tr>
+        <td style="border:1px solid #aaa;padding:7px 10px;width:25%;font-weight:bold;background:#f0f0f0">Data de Encerramento</td>
+        <td style="border:1px solid #aaa;padding:7px 10px">${fmt(f.encerramento?.data)}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #aaa;padding:7px 10px;font-weight:bold;background:#f0f0f0">Ciências</td>
+        <table style="width:100%;border-collapse:collapse"><tr>
+          ${sigLinha(f.encerramento?.professorCiente, "Professor: "+f.professorNome, f.encerramento?.professorCienteEm)}
+          ${sigLinha(f.encerramento?.alunoCiente, "Aluno: "+f.alunoNome, f.encerramento?.alunoCienteEm)}
+        </tr></table>
+      </tr>
+    </table>
+
+    <div style="text-align:right;font-size:8pt;color:#aaa;margin-top:20px">Gerado em ${new Date().toLocaleDateString("pt-BR")} ${new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})} · OrientaTCC UFT</div>
+  </div>`;
+}
+
+window.imprimirFicha = async () => {
+  if (!fichaAtualId) return;
+  const fichaSnap = await getDoc(doc(db, "fichas", fichaAtualId));
+  const f = { id: fichaSnap.id, ...fichaSnap.data() };
+  const oriSnap = await getDocs(collection(db, "fichas", fichaAtualId, "orientacoes"));
+  const orientacoes = oriSnap.docs.map(d => ({id:d.id,...d.data()})).sort((a,b)=>a.data?.localeCompare(b.data));
+  const area = el("print-area");
+  area.innerHTML = gerarHTMLFicha(f, orientacoes);
+  area.style.display = "block";
+  window.print();
+  area.style.display = "none";
+};
+
+window.baixarFichaPDF = async () => {
+  if (!fichaAtualId) return;
+  const fichaSnap = await getDoc(doc(db, "fichas", fichaAtualId));
+  const f = { id: fichaSnap.id, ...fichaSnap.data() };
+  const oriSnap = await getDocs(collection(db, "fichas", fichaAtualId, "orientacoes"));
+  const orientacoes = oriSnap.docs.map(d => ({id:d.id,...d.data()})).sort((a,b)=>a.data?.localeCompare(b.data));
+  const conteudo = gerarHTMLFicha(f, orientacoes);
+  const blob = new Blob([`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ficha TCC - ${f.alunoNome}</title>
+    <style>body{margin:1.5cm 2cm;font-family:Arial,sans-serif}
+.btn-acao {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity .2s;
+}
+.btn-acao:hover { opacity: 1; background: #f0f0f0; }
+
+</style></head><body>${conteudo}
+<!-- MODAL: EDITAR ORIENTAÇÃO -->
+<div class="modal-overlay" id="modalEditarOrientacao">
+  <div class="modal-box">
+    <div class="modal-title">✏️ Editar Orientação <button class="mclose" onclick="closeModal('modalEditarOrientacao')">×</button></div>
+    <input type="hidden" id="eo-fid">
+    <input type="hidden" id="eo-oid">
+    <div class="fg"><label>Data da reunião *</label><input type="date" id="eo-data"></div>
+    <div class="fg"><label>Modalidade *</label>
+      <select id="eo-modalidade">
+        <option value="Presencial">Presencial</option>
+        <option value="Online">Online</option>
+        <option value="Híbrida">Híbrida</option>
+      </select>
+    </div>
+    <div class="fg"><label>Assunto discutido *</label><textarea id="eo-assunto" rows="3" placeholder="Descreva os assuntos discutidos..."></textarea></div>
+    <div class="fg"><label>Encaminhamentos</label><textarea id="eo-enc" rows="3" placeholder="Descreva os encaminhamentos definidos..."></textarea></div>
+    <div class="err" id="eo-err"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modalEditarOrientacao')">Cancelar</button>
+      <button class="btn btn-green btn-sm" id="btn-eo-salvar" onclick="salvarEdicaoOrientacao()">Salvar alterações</button>
+    </div>
+  </div>
+</div>
+
+</body></html>`], {type:"text/html"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `Ficha_TCC_${f.alunoNome.replace(/ /g,"_")}.html`;
+  a.click();
+};
+
+async function gerarHTMLRelatorioCoord() {
+  const snapF = await getDocs(collection(db, "fichas"));
+  const fichas = snapF.docs.map(d => ({id:d.id,...d.data()}));
+  const snapU = await getDocs(query(collection(db, "usuarios"), where("tipo","==","professor")));
+  const profs = snapU.docs.map(d => d.data());
+  const snapA = await getDocs(query(collection(db, "usuarios"), where("tipo","==","aluno")));
+  const alunos = snapA.docs.map(d => d.data());
+
+  const hoje = new Date().toLocaleDateString("pt-BR");
+  let totalOri = 0, totalPend = 0;
+
+  // calcular orientações
+  for (const f of fichas) {
+    const os = await getDocs(collection(db, "fichas", f.id, "orientacoes"));
+    totalOri += os.size;
+    os.docs.forEach(o => { const d=o.data(); if(!d.professorCiente||!d.alunoCiente) totalPend++; });
+  }
+
+  const fichasRows = fichas.map(f => {
+    const aceiteOk = f.aceite?.professorCiente && f.aceite?.alunoCiente;
+    const encOk = f.encerramento?.professorCiente && f.encerramento?.alunoCiente;
+    const status = encOk ? "Encerrado" : aceiteOk ? "Em andamento" : "Aceite pendente";
+    const cor = encOk ? "#006B3C" : aceiteOk ? "#1a5ccc" : "#C8A84B";
+    return `<tr>
+      <td style="border:1px solid #ccc;padding:5px 8px">${f.alunoNome}</td>
+      <td style="border:1px solid #ccc;padding:5px 8px">${f.professorNome}</td>
+      <td style="border:1px solid #ccc;padding:5px 8px;font-style:italic">${f.titulo}</td>
+      <td style="border:1px solid #ccc;padding:5px 8px">${f.tipo} · ${f.semestre}</td>
+      <td style="border:1px solid #ccc;padding:5px 8px;color:${cor};font-weight:bold">${status}</td>
+    </tr>`;
+  }).join("");
+
+  return `
+  <div style="font-family:Arial,sans-serif;font-size:11pt;color:#000">
+    <div style="text-align:center;border-bottom:2px solid #006B3C;padding-bottom:12px;margin-bottom:20px">
+      <div style="font-size:10pt;color:#555">UNIVERSIDADE FEDERAL DO TOCANTINS — UFT</div>
+      <div style="font-size:10pt;color:#555">Curso de Pedagogia — Campus Palmas</div>
+      <div style="font-size:15pt;font-weight:bold;color:#006B3C;margin-top:6px">RELATÓRIO GERAL — COORDENAÇÃO TCC</div>
+      <div style="font-size:9pt;color:#777">Gerado em ${hoje}</div>
+    </div>
+
+    <!-- Resumo -->
+    <div style="display:flex;gap:16px;margin-bottom:20px">
+      ${[
+        ["Professores", profs.length, "#1F4E79"],
+        ["Alunos", alunos.length, "#006B3C"],
+        ["Fichas ativas", fichas.length, "#C8A84B"],
+        ["Orientações", totalOri, "#555"],
+        ["Pendentes ciência", totalPend, "#C00000"],
+      ].map(([lbl,num,cor])=>`
+        <div style="flex:1;border:1px solid #ddd;border-top:3px solid ${cor};border-radius:6px;padding:10px;text-align:center">
+          <div style="font-size:22pt;font-weight:bold;color:${cor}">${num}</div>
+          <div style="font-size:8pt;color:#777;text-transform:uppercase">${lbl}</div>
+        </div>`).join("")}
+    </div>
+
+    <!-- Professores -->
+    <div style="font-weight:bold;font-size:12pt;color:#006B3C;margin:14px 0 6px;border-left:4px solid #006B3C;padding-left:8px">Professores Orientadores</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:10pt">
+      <thead><tr style="background:#f0f0f0">
+        <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Nome</th>
+        <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">E-mail</th>
+        <th style="border:1px solid #aaa;padding:6px 8px;text-align:center">Fichas</th>
+      </tr></thead>
+      <tbody>${profs.map(p=>{
+        const n=fichas.filter(f=>f.professorId===p.uid).length;
+        return `<tr><td style="border:1px solid #ccc;padding:5px 8px">${p.nome}</td><td style="border:1px solid #ccc;padding:5px 8px">${p.email}</td><td style="border:1px solid #ccc;padding:5px 8px;text-align:center">${n}</td></tr>`;
+      }).join("")}</tbody>
+    </table>
+
+    <!-- Fichas -->
+    <div style="font-weight:bold;font-size:12pt;color:#006B3C;margin:14px 0 6px;border-left:4px solid #006B3C;padding-left:8px">Fichas de Orientação</div>
+    <table style="width:100%;border-collapse:collapse;font-size:10pt">
+      <thead><tr style="background:#f0f0f0">
+        <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Aluno</th>
+        <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Orientador</th>
+        <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Título</th>
+        <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Tipo/Semestre</th>
+        <th style="border:1px solid #aaa;padding:6px 8px;text-align:left">Status</th>
+      </tr></thead>
+      <tbody>${fichasRows}</tbody>
+    </table>
+    <div style="text-align:right;font-size:8pt;color:#aaa;margin-top:20px">OrientaTCC UFT · ${hoje}</div>
+  </div>`;
+}
+
+window.imprimirRelatorioCoord = async () => {
+  const area = el("print-area");
+  area.innerHTML = "<div style='text-align:center;padding:2rem'>Carregando dados...</div>";
+  area.style.display = "block";
+  area.innerHTML = await gerarHTMLRelatorioCoord();
+  window.print();
+  area.style.display = "none";
+};
+
+window.baixarRelatorioCoordPDF = async () => {
+  const conteudo = await gerarHTMLRelatorioCoord();
+  const blob = new Blob([`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Relatório Coordenação TCC UFT</title>
+    <style>body{margin:1.5cm 2cm;font-family:Arial,sans-serif}
+.btn-acao {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity .2s;
+}
+.btn-acao:hover { opacity: 1; background: #f0f0f0; }
+
+</style></head><body>${conteudo}
+<!-- MODAL: EDITAR ORIENTAÇÃO -->
+<div class="modal-overlay" id="modalEditarOrientacao">
+  <div class="modal-box">
+    <div class="modal-title">✏️ Editar Orientação <button class="mclose" onclick="closeModal('modalEditarOrientacao')">×</button></div>
+    <input type="hidden" id="eo-fid">
+    <input type="hidden" id="eo-oid">
+    <div class="fg"><label>Data da reunião *</label><input type="date" id="eo-data"></div>
+    <div class="fg"><label>Modalidade *</label>
+      <select id="eo-modalidade">
+        <option value="Presencial">Presencial</option>
+        <option value="Online">Online</option>
+        <option value="Híbrida">Híbrida</option>
+      </select>
+    </div>
+    <div class="fg"><label>Assunto discutido *</label><textarea id="eo-assunto" rows="3" placeholder="Descreva os assuntos discutidos..."></textarea></div>
+    <div class="fg"><label>Encaminhamentos</label><textarea id="eo-enc" rows="3" placeholder="Descreva os encaminhamentos definidos..."></textarea></div>
+    <div class="err" id="eo-err"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modalEditarOrientacao')">Cancelar</button>
+      <button class="btn btn-green btn-sm" id="btn-eo-salvar" onclick="salvarEdicaoOrientacao()">Salvar alterações</button>
+    </div>
+  </div>
+</div>
+
+</body></html>`], {type:"text/html"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "Relatorio_Coordenacao_TCC_UFT.html";
+  a.click();
+};
+
+
+// ══ GESTÃO DE USUÁRIOS (coordenador) ══════════════════
+
+window.abrirEditarUsuario = (uid, nome, email, tipo) => {
+  el("edit-uid").value = uid;
+  el("edit-nome").value = nome;
+  el("edit-email-display").textContent = email;
+  el("edit-tipo").textContent = tipo === "professor" ? "Professor" : "Aluno";
+  setErr("edit-err", "");
+  openModal("modalEditarUsuario");
+};
+
+window.salvarEdicaoUsuario = async () => {
+  const uid = el("edit-uid").value;
+  const nome = el("edit-nome").value.trim();
+  if (!nome) { setErr("edit-err", "Nome não pode ser vazio."); return; }
+  setBtnLoad("btn-edit-salvar", true, "Salvando...");
+  try {
+    await updateDoc(doc(db, "usuarios", uid), { nome });
+    // Atualizar também nas fichas onde esse usuário aparece
+    const qProf = query(collection(db, "fichas"), where("professorId", "==", uid));
+    const qAluno = query(collection(db, "fichas"), where("alunoId", "==", uid));
+    const [snapP, snapA] = await Promise.all([getDocs(qProf), getDocs(qAluno)]);
+    const updates = [];
+    snapP.docs.forEach(d => updates.push(updateDoc(d.ref, { professorNome: nome })));
+    snapA.docs.forEach(d => updates.push(updateDoc(d.ref, { alunoNome: nome })));
+    await Promise.all(updates);
+    closeModal("modalEditarUsuario");
+    // Recarregar a lista
+    const tipo = el("edit-tipo").textContent;
+    if (tipo === "Professor") loadProfessores();
+    else loadAlunos();
+  } catch(e) {
+    setErr("edit-err", "Erro ao salvar: " + e.message);
+  }
+  setBtnLoad("btn-edit-salvar", false, "Salvar");
+};
+
+window.excluirUsuario = async (uid, nome, tipo) => {
+  try {
+    // Buscar quantas fichas esse usuário tem
+    const campo = tipo === "professor" ? "professorId" : "alunoId";
+    const qF = query(collection(db, "fichas"), where(campo, "==", uid));
+    const snapF = await getDocs(qF);
+    const qtdFichas = snapF.size;
+
+    // Mensagem de confirmação com aviso claro
+    let msg = `Tem certeza que deseja excluir ${tipo === "professor" ? "o professor" : "o aluno"}?\n\n`;
+    msg += `👤 Nome: ${nome}\n`;
+    msg += `📋 Fichas vinculadas: ${qtdFichas}\n\n`;
+    if (qtdFichas > 0) {
+      msg += `⚠️ ATENÇÃO: Este usuário possui ${qtdFichas} ficha(s) no sistema.\nAs fichas serão MANTIDAS, mas este login será excluído.\n\n`;
+    } else {
+      msg += `✅ Este usuário não possui fichas — exclusão segura.\n\n`;
+    }
+    msg += `Deseja continuar?`;
+
+    if (!confirm(msg)) return;
+
+    await deleteDoc(doc(db, "usuarios", uid));
+    if (tipo === "professor") loadProfessores();
+    else loadAlunos();
+    alert(`${tipo === "professor" ? "Professor" : "Aluno"} removido com sucesso!\nAs fichas vinculadas foram mantidas.`);
+  } catch(e) {
+    alert("Erro ao excluir: " + e.message);
+  }
+};
+
+// ══ EDITAR FICHA ══════════════════════════════════════
+
+window.abrirEditarFicha = async (fichaId) => {
+  console.log("abrirEditarFicha chamada com id:", fichaId);
+  const snap = await getDoc(doc(db, "fichas", fichaId));
+  const f = snap.data();
+  el("ef-id").value = fichaId;
+  el("ef-titulo").value = f.titulo || "";
+  el("ef-tipo").value = f.tipo || "TCC I";
+  el("ef-semestre").value = f.semestre || "2026/1";
+  setErr("ef-err", "");
+  openModal("modalEditarFicha");
+};
+
+window.salvarEdicaoFicha = async () => {
+  const fichaId = el("ef-id").value;
+  const titulo = el("ef-titulo").value.trim();
+  const tipo = el("ef-tipo").value;
+  const semestre = el("ef-semestre").value;
+  if (!titulo) { setErr("ef-err", "Título não pode ser vazio."); return; }
+  setBtnLoad("btn-ef-salvar", true, "Salvando...");
+  try {
+    await updateDoc(doc(db, "fichas", fichaId), { titulo, tipo, semestre });
+    closeModal("modalEditarFicha");
+    verFicha(fichaId);
+  } catch(e) {
+    setErr("ef-err", "Erro: " + e.message);
+  }
+  setBtnLoad("btn-ef-salvar", false, "Salvar");
+};
+
+window.excluirFicha = async (fichaId, alunoNome) => {
+  console.log("excluirFicha chamada com id:", fichaId);
+  if (!confirm(`Excluir a ficha de "${alunoNome}"?\n\nTodos os registros de orientação serão apagados permanentemente.`)) return;
+  try {
+    // Apagar sub-coleção de orientações
+    const oriSnap = await getDocs(collection(db, "fichas", fichaId, "orientacoes"));
+    await Promise.all(oriSnap.docs.map(d => deleteDoc(d.ref)));
+    await deleteDoc(doc(db, "fichas", fichaId));
+    showPage("fichas");
+  } catch(e) {
+    alert("Erro ao excluir ficha: " + e.message);
+  }
+};
+
+// ── BUSCA ALUNO ─────────────────────────────────────
+let todosAlunos = [];
+
+async function carregarAlunos() {
+  if (todosAlunos.length) return;
+  const q = query(collection(db, "usuarios"), where("tipo", "==", "aluno"));
+  const snap = await getDocs(q);
+  todosAlunos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+window.buscarAluno = async (termo) => {
+  await carregarAlunos();
+  const res = el("nf-aluno-results");
+  const sel = el("nf-aluno-selecionado");
+  el("nf-aluno-id").value = "";
+  sel.style.display = "none";
+
+  if (!termo || termo.length < 2) { res.style.display = "none"; return; }
+
+  const t = termo.toLowerCase();
+  const encontrados = todosAlunos.filter(a =>
+    a.nome?.toLowerCase().includes(t) || a.email?.toLowerCase().includes(t)
+  );
+
+  if (!encontrados.length) {
+    res.style.display = "block";
+    res.innerHTML = '<div style="padding:.65rem 1rem;font-size:.82rem;color:var(--muted)">Nenhum aluno encontrado. O aluno já criou a conta?</div>';
+    return;
+  }
+
+  res.style.display = "block";
+  res.innerHTML = encontrados.map(a => `
+    <div onclick="selecionarAluno('${a.uid}','${a.nome}','${a.email}')"
+         style="padding:.65rem 1rem; cursor:pointer; display:flex; align-items:center; gap:.65rem; border-bottom:1px solid var(--border); transition:.1s"
+         onmouseover="this.style.background='var(--gl)'" onmouseout="this.style.background=''">
+      <div style="width:30px;height:30px;border-radius:6px;background:var(--g);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;flex-shrink:0">
+        ${a.nome?.split(" ").map(x=>x[0]).slice(0,2).join("").toUpperCase()}
+      </div>
+      <div>
+        <div style="font-size:.85rem;font-weight:600">${a.nome}</div>
+        <div style="font-size:.73rem;color:var(--muted)">${a.email}</div>
+      </div>
+    </div>`).join("");
+};
+
+window.selecionarAluno = (uid, nome, email) => {
+  el("nf-aluno-id").value = uid;
+  el("nf-aluno-busca").value = "";
+  el("nf-aluno-results").style.display = "none";
+  const sel = el("nf-aluno-selecionado");
+  sel.style.display = "block";
+  sel.innerHTML = `✓ ${nome} <span style="font-weight:400;opacity:.7">${email}</span>
+    <span onclick="limparBuscaAluno()" style="float:right;cursor:pointer;opacity:.6;font-weight:400">✕ trocar</span>`;
+};
+
+window.limparBuscaAluno = () => {
+  el("nf-aluno-id").value = "";
+  el("nf-aluno-busca").value = "";
+  el("nf-aluno-results").style.display = "none";
+  el("nf-aluno-selecionado").style.display = "none";
+  todosAlunos = []; // força recarregar na próxima vez
+};
+
+// ── HELPERS ─────────────────────────────────────────
+window.abrirModalOrientacao = (fichaId) => {
+  set("ori-fichaId", fichaId);
+  set("ori-data", hoje());
+  openModal("modalOrientacao");
+};
+
+window.showPage = (id) => {
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+  el("page-" + id)?.classList.add("active");
+  document.querySelector(`[data-page="${id}"]`)?.classList.add("active");
+
+  if (id === "fichas")      loadFichas();
+  if (id === "dashboard")   loadDashboard();
+  if (id === "alunos")      loadAlunos();
+  if (id === "pendentes")   loadPendentes();
+  if (id === "professores") loadProfessores();
+};
+
+window.openModal = (id) => {
+  el(id)?.classList.add("open");
+  if (id === "modalNovaFicha") { limparBuscaAluno(); setTimeout(() => el("nf-aluno-busca")?.focus(), 100); }
+};
+window.closeModal = (id) => el(id)?.classList.remove("open");
+
+window.salvarEdicaoOrientacao = async () => {
+  const fichaId = document.getElementById('eo-fid').value;
+  const oriId   = document.getElementById('eo-oid').value;
+  const data    = document.getElementById('eo-data').value;
+  const modalidade = document.getElementById('eo-modalidade').value;
+  const assunto = document.getElementById('eo-assunto').value.trim();
+  const encaminhamentos = document.getElementById('eo-enc').value.trim();
+  if (!data || !assunto) {
+    document.getElementById('eo-err').textContent = 'Data e assunto são obrigatórios.';
+    return;
+  }
+  const btn = document.getElementById('btn-eo-salvar');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    await updateDoc(doc(db, 'fichas', fichaId, 'orientacoes', oriId), {
+      data, modalidade, assunto, encaminhamentos
+    });
+    closeModal('modalEditarOrientacao');
+    verFicha(fichaId);
+  } catch(e) {
+    document.getElementById('eo-err').textContent = 'Erro: ' + e.message;
+  }
+  btn.disabled = false; btn.textContent = 'Salvar alterações';
+};
+
+window.excluirOrientacao = async (fichaId, oriId) => {
+  try {
+    await deleteDoc(doc(db, 'fichas', fichaId, 'orientacoes', oriId));
+    verFicha(fichaId);
+  } catch(e) {
+    alert('Erro ao excluir: ' + e.message);
+  }
+};
+
+
+function showApp() {
+  el("login-screen").style.display = "none";
+  el("app-screen").style.display = "flex";
+}
+function showLogin() {
+  el("login-screen").style.display = "flex";
+  el("app-screen").style.display = "none";
+}
+
+function el(id)    { return document.getElementById(id); }
+function v(id, val) {
+  const e = el(id);
+  if (!e) return "";
+  if (val !== undefined) { e.value = val; return; }
+  return e.value?.trim() || "";
+}
+function set(id, val) { const e = el(id); if (e) e.value = val; }
+function setErr(id, msg) { const e = el(id); if (e) e.textContent = msg; }
+function setBtnLoad(id, loading, txt) { const e = el(id); if (e) { e.disabled = loading; e.textContent = txt; } }
+function emptyHTML(ico, txt) { return `<div class="empty"><div class="empty-ico">${ico}</div><div>${txt}</div></div>`; }
+function hoje() { return new Date().toISOString().split("T")[0]; }
+function fmtD(d) { if (!d) return "—"; const [y,m,day] = d.split("-"); return `${day}/${m}/${y}`; }
+function fmtDT(iso) { if (!iso) return ""; const d = new Date(iso); return d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", {hour:"2-digit",minute:"2-digit"}); }
+function traduzErro(code) {
+  const erros = {
+    "auth/invalid-credential": "E-mail ou senha incorretos.",
+    "auth/email-already-in-use": "Este e-mail já está cadastrado.",
+    "auth/weak-password": "Senha muito fraca (mínimo 6 caracteres).",
+    "auth/invalid-email": "E-mail inválido.",
+    "auth/user-not-found": "Usuário não encontrado.",
+    "auth/wrong-password": "Senha incorreta.",
+  };
+  return erros[code] || "Erro: " + code;
+}
+
+// Fechar modais clicando fora
+document.querySelectorAll(".modal-overlay").forEach(m =>
+  m.addEventListener("click", e => { if (e.target === m) m.classList.remove("open"); })
+);
+</script>
+
+<style>
+:root {
+  --g: #006B3C; --g2: #00874D; --gl: #E6F5EE;
+  --gold: #C8A84B; --goldl: #FDF5E0;
+  --ink: #1A1A22; --paper: #F8F6F1; --white: #fff;
+  --border: #DDD9D0; --muted: #8A8680;
+  --red: #C0392B; --redl: #FDECEA;
+  --blue: #1a5ccc; --bluel: #E8F0FE;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Source Sans 3', sans-serif; background: var(--paper); color: var(--ink); }
+
+/* LOGIN */
+#login-screen {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #004d2b 0%, #006B3C 60%, #008c50 100%);
+}
+.login-box {
+  background: var(--white); border-radius: 18px;
+  padding: 2.5rem 2rem; width: 100%; max-width: 420px;
+  box-shadow: 0 32px 80px rgba(0,0,0,0.25);
+}
+.login-logo { text-align: center; margin-bottom: 1.75rem; }
+.login-emblem {
+  width: 56px; height: 56px; background: var(--g); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 0.75rem;
+  font-family: 'Playfair Display', serif; font-weight: 900; font-size: 1.2rem; color: #fff;
+}
+.login-title { font-family: 'Playfair Display', serif; font-size: 1.3rem; font-weight: 700; }
+.login-sub { font-size: .78rem; color: var(--muted); margin-top: .2rem; }
+.tabs-login { display: flex; border-bottom: 2px solid var(--border); margin-bottom: 1.5rem; }
+.tab-l {
+  flex: 1; text-align: center; padding: .6rem; font-size: .85rem; font-weight: 600;
+  cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
+}
+.tab-l.active { color: var(--g); border-color: var(--g); }
+.form-tab { display: none; }
+.form-tab.active { display: block; }
+.fg { display: flex; flex-direction: column; gap: .35rem; margin-bottom: .85rem; }
+.fg label { font-size: .68rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.fg input, .fg select {
+  font-family: 'Source Sans 3', sans-serif; font-size: .875rem;
+  padding: .55rem .8rem; border: 1px solid var(--border);
+  border-radius: 7px; background: var(--paper); color: var(--ink); outline: none;
+  transition: border .12s;
+}
+.fg input:focus, .fg select:focus { border-color: var(--g); }
+.err { color: var(--red); font-size: .8rem; margin-bottom: .75rem; min-height: 1.1rem; }
+.btn { font-family: 'Source Sans 3', sans-serif; font-size: .85rem; font-weight: 600; padding: .55rem 1.2rem; border-radius: 7px; border: none; cursor: pointer; transition: all .15s; }
+.btn-green { background: var(--g); color: #fff; width: 100%; }
+.btn-green:hover { background: var(--g2); }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--ink); }
+.btn-outline:hover { background: var(--paper); }
+.btn-sm { font-size: .78rem; padding: .4rem .9rem; }
+
+/* APP */
+#app-screen { display: none; flex-direction: column; height: 100vh; }
+.app-header {
+  background: var(--g); color: #fff; height: 60px;
+  display: flex; align-items: center; gap: 1rem; padding: 0 1.5rem;
+  flex-shrink: 0;
+}
+.app-logo { font-family: 'Playfair Display', serif; font-weight: 900; font-size: 1.1rem; }
+.app-logo small { font-size: .65rem; font-weight: 300; display: block; opacity: .7; letter-spacing: .5px; }
+.app-user { margin-left: auto; display: flex; align-items: center; gap: .75rem; font-size: .8rem; }
+.user-chip { background: rgba(255,255,255,.12); border-radius: 20px; padding: .3rem .8rem; }
+.logout-btn { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); color: #fff; font-size: .75rem; padding: .3rem .7rem; border-radius: 6px; cursor: pointer; transition: .15s; font-family: 'Source Sans 3', sans-serif; font-weight: 500; }
+.logout-btn:hover { background: rgba(255,255,255,.2); }
+.app-body { display: flex; flex: 1; overflow: hidden; }
+.sidebar { width: 240px; background: var(--white); border-right: 1px solid var(--border); padding: .75rem 0; flex-shrink: 0; }
+.nav-item {
+  display: flex; align-items: center; gap: .65rem;
+  padding: .65rem 1.25rem; cursor: pointer; color: var(--muted);
+  font-size: .875rem; font-weight: 500; border-left: 3px solid transparent;
+  transition: all .15s;
+}
+.nav-item:hover { background: #faf9f6; color: var(--ink); }
+.nav-item.active { color: var(--g); background: var(--gl); border-left-color: var(--g); }
+.nav-ico { font-size: 1rem; width: 18px; text-align: center; }
+.nbadge { margin-left: auto; background: var(--gold); color: var(--g); font-size: .62rem; font-weight: 700; padding: .1rem .4rem; border-radius: 10px; }
+.nav-section { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); padding: .65rem 1.25rem .2rem; margin-top: .25rem; }
+.main { flex: 1; overflow-y: auto; padding: 1.75rem; }
+.page { display: none; }
+.page.active { display: block; }
+.page-hdr { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem; }
+.page-title { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-weight: 700; }
+.page-sub { font-size: .78rem; color: var(--muted); margin-top: .2rem; }
+.stats-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 1rem; margin-bottom: 1.75rem; }
+.scard { background: var(--white); border: 1px solid var(--border); border-radius: 10px; padding: 1.1rem 1.3rem; border-top: 3px solid var(--g); }
+.scard.gold { border-top-color: var(--gold); }
+.scard.red { border-top-color: var(--red); }
+.snum { font-family: 'Playfair Display', serif; font-size: 2rem; font-weight: 900; }
+.slabel { font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+
+/* CARDS */
+.cards-list { display: flex; flex-direction: column; gap: .6rem; }
+.fcard { background: var(--white); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; display: flex; align-items: center; justify-content: space-between; cursor: pointer; transition: all .15s; }
+.fcard:hover { border-color: var(--g); box-shadow: 0 2px 12px rgba(0,107,60,.08); }
+.fcard-left { display: flex; align-items: center; gap: .85rem; flex: 1; }
+.avatar { width: 38px; height: 38px; border-radius: 8px; background: var(--g); color: #fff; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; font-weight: 700; font-size: .85rem; flex-shrink: 0; }
+.fcard-nome { font-weight: 600; font-size: .92rem; }
+.fcard-prof { font-size: .76rem; color: var(--muted); }
+.fcard-tema { font-size: .8rem; color: #555; font-style: italic; margin: .15rem 0; }
+.fcard-tags { display: flex; gap: .4rem; flex-wrap: wrap; }
+.fcard-arrow { color: var(--muted); font-size: 1.3rem; padding-left: .5rem; }
+.tag { display: inline-flex; align-items: center; font-size: .67rem; font-weight: 600; padding: .15rem .5rem; border-radius: 12px; }
+.tag-green { background: var(--gl); color: var(--g); }
+.tag-gold { background: var(--goldl); color: #9a7825; }
+.tag-red { background: var(--redl); color: var(--red); }
+.tag-blue { background: var(--bluel); color: var(--blue); }
+.tag-gray { background: #f0ede8; color: var(--muted); }
+.empty { text-align: center; padding: 2.5rem; color: var(--muted); font-size: .875rem; }
+.empty-ico { font-size: 2rem; margin-bottom: .5rem; }
+
+/* FICHA DETAIL */
+.fd-header { background: var(--g); color: #fff; border-radius: 12px; padding: 1.35rem 1.75rem; margin-bottom: 1.25rem; }
+.fd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+.fd-full { grid-column: 1/-1; border-top: 1px solid rgba(255,255,255,.15); padding-top: .6rem; margin-top: .1rem; }
+.fd-lbl { font-size: .62rem; text-transform: uppercase; letter-spacing: .7px; opacity: .65; margin-bottom: 2px; }
+.fd-val { font-size: .9rem; font-weight: 500; }
+.fd-sub { font-size: .75rem; opacity: .65; }
+.etapa-block { background: var(--white); border: 1px solid var(--border); border-radius: 10px; margin-bottom: .9rem; overflow: hidden; }
+.etapa-hdr { display: flex; align-items: center; gap: .65rem; padding: .85rem 1.25rem; background: #faf9f6; border-bottom: 1px solid var(--border); }
+.etapa-num { width: 26px; height: 26px; background: var(--g); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; font-size: .8rem; font-weight: 700; flex-shrink: 0; }
+.etapa-title { font-weight: 600; font-size: .92rem; }
+.etapa-status { margin-left: auto; }
+.etapa-body { padding: 1.1rem 1.25rem; }
+.aceite-row { display: flex; gap: .75rem; align-items: flex-end; flex-wrap: wrap; }
+.aceite-date { display: flex; flex-direction: column; gap: .3rem; min-width: 130px; }
+.aceite-date label { font-size: .67rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.aceite-date input { font-family: 'Source Sans 3', sans-serif; font-size: .85rem; padding: .45rem .7rem; border: 1px solid var(--border); border-radius: 7px; background: var(--paper); color: var(--ink); outline: none; }
+.aceite-date input:focus { border-color: var(--g); }
+.sig-box { flex: 1; min-width: 160px; border: 1.5px dashed var(--border); border-radius: 8px; padding: .65rem 1rem; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: .82rem; color: var(--muted); cursor: pointer; transition: all .15s; text-align: center; }
+.sig-box.signed { border-style: solid; border-color: var(--g); background: var(--gl); color: var(--g); font-weight: 600; cursor: default; }
+.sig-box small { font-size: .68rem; opacity: .75; font-weight: 400; margin-top: .1rem; }
+.sig-box:hover:not(.signed) { background: var(--gl); border-color: var(--g); color: var(--g); }
+.ori-table { width: 100%; border-collapse: collapse; font-size: .85rem; margin-bottom: .75rem; }
+.ori-table th { font-size: .65rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 600; padding: .5rem .65rem; text-align: left; background: #faf9f6; border-bottom: 1px solid var(--border); }
+.ori-table td { padding: .65rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.ori-table tr:last-child td { border-bottom: none; }
+.mini-sig { display: inline-flex; align-items: center; justify-content: center; font-size: .7rem; padding: .2rem .5rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--border); background: transparent; font-family: 'Source Sans 3', sans-serif; transition: all .12s; }
+.mini-sig.ok { background: var(--gl); color: var(--g); border-color: #b8dfc9; cursor: default; }
+.mini-sig.pend { color: var(--muted); cursor: default; }
+.mini-sig:not(.ok):not(.pend):hover { background: var(--g); color: #fff; border-color: var(--g); }
+.add-row-btn { display: flex; align-items: center; gap: .4rem; font-size: .8rem; font-weight: 600; color: var(--g); background: none; border: none; cursor: pointer; padding: .5rem 0; }
+.add-row-btn:hover { opacity: .7; }
+
+/* MODAL */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(26,26,34,.5); backdrop-filter: blur(4px); z-index: 300; align-items: center; justify-content: center; }
+.modal-overlay.open { display: flex; }
+.modal { background: var(--white); border-radius: 14px; padding: 1.75rem; width: 100%; max-width: 480px; box-shadow: 0 32px 80px rgba(0,0,0,.2); animation: mIn .2s ease; }
+@keyframes mIn { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.modal-title { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 700; margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: center; }
+.mclose { background: none; border: none; font-size: 1.4rem; cursor: pointer; color: var(--muted); line-height: 1; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; }
+.fg.full { grid-column: 1/-1; }
+.fg textarea { font-family: 'Source Sans 3', sans-serif; font-size: .875rem; padding: .55rem .8rem; border: 1px solid var(--border); border-radius: 7px; background: var(--paper); color: var(--ink); outline: none; resize: vertical; min-height: 70px; width: 100%; }
+.fg textarea:focus { border-color: var(--g); }
+.mfooter { display: flex; justify-content: flex-end; gap: .65rem; margin-top: 1.25rem; }
+.codigo-info { font-size: .72rem; color: var(--muted); margin-top: .2rem; }
+
+
+/* ── IMPRESSÃO ─────────────────────────────────────── */
+.print-btn { display:inline-flex; align-items:center; gap:.4rem; font-size:.78rem; font-weight:600; padding:.4rem .9rem; border-radius:7px; border:1px solid var(--border); background:var(--white); color:var(--ink); cursor:pointer; transition:.15s; }
+.print-btn:hover { background:var(--paper); border-color:var(--g); color:var(--g); }
+
+@media print {
+  body * { visibility: hidden; }
+  #print-area, #print-area * { visibility: visible; }
+  #print-area { position: fixed; inset: 0; padding: 1.5cm 2cm; font-family: Arial, sans-serif; font-size: 11pt; color: #000; background: #fff; }
+  .print-hide { display: none !important; }
+  .print-page-break { page-break-before: always; }
+}
+
+@media (max-width: 700px) {
+  .sidebar { display: none; }
+  .stats-row { grid-template-columns: 1fr 1fr; }
+  .form-grid { grid-template-columns: 1fr; }
+  .aceite-row { flex-direction: column; }
+}
+
+.btn-acao {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity .2s;
+}
+.btn-acao:hover { opacity: 1; background: #f0f0f0; }
+
+</style>
+</head>
+<body>
+
+<!-- ═══ LOGIN ═══ -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="login-emblem">UFT</div>
+      <div class="login-title">Fichas TCC</div>
+      <div class="login-sub">Pedagogia — Campus Palmas</div>
+    </div>
+    <div class="tabs-login">
+      <div class="tab-l active" onclick="switchLoginTab('entrar',this)">Entrar</div>
+      <div class="tab-l" onclick="switchLoginTab('cadastro',this)">Criar conta</div>
+    </div>
+
+    <!-- ENTRAR -->
+    <div class="form-tab active" id="form-entrar">
+      <div class="fg"><label>E-mail</label><input type="email" id="login-email" placeholder="seu@email.com"></div>
+      <div class="fg"><label>Senha</label><input type="password" id="login-senha" placeholder="••••••••"></div>
+      <div class="err" id="login-err"></div>
+      <button class="btn btn-green" id="btn-login" onclick="fazerLogin()">Entrar</button>
+      <button type="button" id="btn-recuperar" onclick="recuperarSenha()" style="background:none;border:none;color:var(--g);font-size:.8rem;cursor:pointer;margin-top:.5rem;font-family:'Source Sans 3',sans-serif;text-decoration:underline;padding:0">Esqueci minha senha</button>
+    </div>
+
+    <!-- CADASTRO -->
+    <div class="form-tab" id="form-cadastro">
+      <div class="fg"><label>Nome completo</label><input type="text" id="cad-nome" placeholder="Seu nome"></div>
+      <div class="fg"><label>E-mail</label><input type="email" id="cad-email" placeholder="seu@email.com"></div>
+      <div class="fg"><label>Senha (mín. 6 caracteres)</label><input type="password" id="cad-senha" placeholder="••••••••"></div>
+      <div class="fg">
+        <label>Tipo de conta</label>
+        <select id="cad-tipo" onchange="toggleCodigo(this.value)">
+          <option value="aluno">Aluno</option>
+          <option value="professor">Professor</option>
+          <option value="coordenador">Coordenador(a)</option>
+        </select>
+      </div>
+      <div class="fg" id="codigo-wrap" style="display:none">
+        <label>Código de acesso</label>
+        <input type="text" id="cad-codigo" placeholder="Solicite ao coordenador do curso">
+        <div class="codigo-info">Professores usam o código UFT2025. Coordenadores usam código próprio.</div>
+      </div>
+      <div class="err" id="cad-err"></div>
+      <button class="btn btn-green" id="btn-cad" onclick="fazerCadastro()">Criar conta</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ APP ═══ -->
+<div id="app-screen">
+  <div class="app-header">
+    <div class="app-logo">OrientaTCC <small>UFT PEDAGOGIA PALMAS</small></div>
+    <div class="app-user">
+      <span class="user-chip" id="user-name-chip">—</span>
+      <button class="logout-btn" onclick="fazerLogout()">Sair</button>
+    </div>
+  </div>
+  <div class="app-body">
+    <aside class="sidebar">
+      <div class="nav-section">Principal</div>
+      <div class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')"><span class="nav-ico">🏠</span>Painel</div>
+      <div class="nav-item" data-page="fichas" onclick="showPage('fichas')"><span class="nav-ico">📋</span>Fichas de Orientação</div>
+      <div class="nav-section">Ciência</div>
+      <div class="nav-item" data-page="pendentes" onclick="showPage('pendentes')"><span class="nav-ico">✍️</span>Pendentes<span class="nbadge" id="badge-pend"></span></div>
+      <div class="nav-section" id="nav-sec-admin" style="display:none">Gestão</div>
+      <div class="nav-item" id="nav-alunos" data-page="alunos" onclick="showPage('alunos')" style="display:none"><span class="nav-ico">🎓</span>Alunos</div>
+      <div class="nav-item" id="nav-professores" data-page="professores" onclick="showPage('professores')" style="display:none"><span class="nav-ico">👩‍🏫</span>Professores</div>
+    </aside>
+    <main class="main">
+
+      <!-- DASHBOARD -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-hdr">
+          <div><div class="page-title">Painel Geral</div><div class="page-sub" id="user-tipo-label">—</div></div>
+          <button class="btn btn-green btn-sm" id="btn-nova-ficha" style="display:none" onclick="openModal('modalNovaFicha')">+ Nova Ficha</button>
+          <div id="btns-coord" style="display:none;gap:.5rem">
+            <button class="print-btn" onclick="imprimirRelatorioCoord()">🖨️ Relatório geral</button>
+            <button class="print-btn" onclick="baixarRelatorioCoordPDF()">⬇️ PDF Coordenação</button>
+          </div>
+        </div>
+        <div class="stats-row">
+          <div class="scard"><div class="snum" id="st-fichas">—</div><div class="slabel">Fichas ativas</div></div>
+          <div class="scard gold"><div class="snum" id="st-ori">—</div><div class="slabel">Orientações registradas</div></div>
+          <div class="scard red"><div class="snum" id="st-pend">—</div><div class="slabel">Pendentes de ciência</div></div>
+        </div>
+        <div class="page-title" style="font-size:1rem;margin-bottom:.75rem">Fichas recentes</div>
+        <div class="cards-list" id="dash-fichas"></div>
+      </div>
+
+      <!-- FICHAS -->
+      <div class="page" id="page-fichas">
+        <div class="page-hdr">
+          <div><div class="page-title">Fichas de Orientação</div></div>
+          <button class="btn btn-green btn-sm" id="btn-nova-ficha2" style="display:none" onclick="openModal('modalNovaFicha')">+ Nova Ficha</button>
+        </div>
+        <div class="cards-list" id="fichas-list"></div>
+      </div>
+
+      <!-- DETALHE -->
+      <div class="page" id="page-ficha-detail">
+        <div class="page-hdr">
+          <button class="btn btn-outline btn-sm" onclick="showPage('fichas')">← Voltar</button>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+            <button class="btn btn-outline btn-sm" id="btn-editar-ficha" style="display:none" onclick="abrirEditarFichaAtual()">✏️ Editar ficha</button>
+            <button class="btn btn-sm" id="btn-excluir-ficha" style="display:none;background:#fdecea;color:#c0392b;border:1px solid #f5c6cb" onclick="excluirFichaAtual()">🗑️ Excluir ficha</button>
+            <button class="print-btn" onclick="imprimirFicha()">🖨️ Imprimir ficha</button>
+            <button class="print-btn" onclick="baixarFichaPDF()">⬇️ Salvar PDF</button>
+          </div>
+        </div>
+        <div id="ficha-detail-body" style="max-width:780px"></div>
+      </div>
+
+      <!-- ALUNOS -->
+      <div class="page" id="page-alunos">
+        <div class="page-hdr"><div><div class="page-title">Alunos cadastrados</div></div></div>
+        <div class="cards-list" id="aluno-list"></div>
+      </div>
+
+      <!-- PENDENTES -->
+      <div class="page" id="page-pendentes">
+        <div class="page-hdr"><div><div class="page-title">Pendentes de Ciência</div></div></div>
+        <div class="cards-list" id="pendentes-list"></div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+      <!-- PROFESSORES -->
+      <div class="page" id="page-professores">
+        <div class="page-hdr"><div><div class="page-title">Professores cadastrados</div><div class="page-sub">Visão da Coordenação</div></div></div>
+        <div class="cards-list" id="prof-list"></div>
+      </div>
+
+<!-- MODAL: NOVA FICHA -->
+<div class="modal-overlay" id="modalNovaFicha">
+  <div class="modal">
+    <div class="modal-title">Nova Ficha de Orientação <button class="mclose" onclick="closeModal('modalNovaFicha')">×</button></div>
+    <div class="form-grid">
+      <div class="fg full">
+        <label>Buscar Aluno *</label>
+        <input type="text" id="nf-aluno-busca" placeholder="Digite nome ou e-mail do aluno..." oninput="buscarAluno(this.value)" autocomplete="off">
+        <div id="nf-aluno-results" style="display:none; border:1px solid var(--border); border-radius:7px; margin-top:4px; background:var(--white); max-height:180px; overflow-y:auto; box-shadow:0 4px 12px rgba(0,0,0,.1);"></div>
+        <input type="hidden" id="nf-aluno-id">
+        <div id="nf-aluno-selecionado" style="display:none; margin-top:6px; background:var(--gl); border-radius:7px; padding:.5rem .8rem; font-size:.82rem; color:var(--g); font-weight:600;"></div>
+      </div>
+      <div class="fg full"><label>Título Provisório *</label><input type="text" id="nf-titulo" placeholder="Tema ou título da pesquisa"></div>
+      <div class="fg"><label>Tipo</label>
+        <select id="nf-tipo"><option>TCC I</option><option>TCC II</option><option>Monografia</option><option>Artigo Científico</option></select>
+      </div>
+      <div class="fg"><label>Semestre</label>
+        <select id="nf-semestre"><option>2026/1</option><option>2026/2</option><option>2027/1</option><option>2027/2</option></select>
+      </div>
+    </div>
+    <div class="err" id="nf-err"></div>
+    <div class="mfooter">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modalNovaFicha')">Cancelar</button>
+      <button class="btn btn-green btn-sm" id="btn-nf" onclick="criarFicha()">Criar Ficha</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: REGISTRAR ORIENTAÇÃO -->
+<div class="modal-overlay" id="modalOrientacao">
+  <div class="modal">
+    <div class="modal-title">Registrar Orientação <button class="mclose" onclick="closeModal('modalOrientacao')">×</button></div>
+    <input type="hidden" id="ori-fichaId">
+    <div class="form-grid">
+      <div class="fg"><label>Data *</label><input type="date" id="ori-data"></div>
+      <div class="fg"><label>Modalidade</label>
+        <select id="ori-modalidade"><option>Presencial</option><option>Online</option><option>Assíncrona</option></select>
+      </div>
+      <div class="fg full"><label>Assunto tratado *</label><textarea id="ori-assunto" placeholder="O que foi discutido..."></textarea></div>
+      <div class="fg full"><label>Encaminhamentos para o aluno</label><textarea id="ori-enc" placeholder="Tarefas até a próxima reunião..."></textarea></div>
+    </div>
+    <div class="err" id="ori-err"></div>
+    <div class="mfooter">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modalOrientacao')">Cancelar</button>
+      <button class="btn btn-green btn-sm" id="btn-ori" onclick="registrarOrientacao()">Registrar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+
+
+
+window.abrirEditarFichaAtual = function() {
+  var id = document.getElementById('btn-editar-ficha').getAttribute('data-id');
+  if (!id) { alert('Erro: ficha não identificada. Reabra a ficha e tente novamente.'); return; }
+  window.abrirEditarFicha(id);
+};
+
+window.excluirFichaAtual = function() {
+  var id = document.getElementById('btn-excluir-ficha').getAttribute('data-id');
+  if (!id) { alert('Erro: ficha não identificada. Reabra a ficha e tente novamente.'); return; }
+  window.excluirFicha(id, 'esta ficha');
+};
+
+window.abrirEditarOrientacaoBtn = function(btn) {
+  document.getElementById('eo-fid').value = btn.getAttribute('data-fid');
+  document.getElementById('eo-oid').value = btn.getAttribute('data-oid');
+  document.getElementById('eo-data').value = btn.getAttribute('data-data');
+  document.getElementById('eo-modalidade').value = btn.getAttribute('data-mod');
+  document.getElementById('eo-assunto').value = btn.getAttribute('data-assunto');
+  document.getElementById('eo-enc').value = btn.getAttribute('data-enc');
+  document.getElementById('eo-err').textContent = '';
+  window.openModal('modalEditarOrientacao');
+};
+
+window.excluirOrientacaoBtn = function(btn) {
+  const fid = btn.getAttribute('data-fid');
+  const oid = btn.getAttribute('data-oid');
+  const assunto = btn.getAttribute('data-assunto');
+  if (!confirm('Excluir esta orientação?\n\n"' + assunto + '"\n\nEsta ação não pode ser desfeita.')) return;
+  window.excluirOrientacao(fid, oid);
+};
+
+window.abrirEditarUsuarioBtn = function(btn) {
+  const uid   = btn.getAttribute('data-uid');
+  const nome  = btn.getAttribute('data-nome');
+  const email = btn.getAttribute('data-email') || '';
+  const tipo  = btn.getAttribute('data-tipo');
+  window.abrirEditarUsuario(uid, nome, email, tipo);
+};
+
+window.excluirUsuarioBtn = function(btn) {
+  const uid  = btn.getAttribute('data-uid');
+  const nome = btn.getAttribute('data-nome');
+  const tipo = btn.getAttribute('data-tipo');
+  window.excluirUsuario(uid, nome, tipo);
+};
+
+function switchLoginTab(id, el) {
+  document.querySelectorAll('.form-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-l').forEach(t => t.classList.remove('active'));
+  document.getElementById('form-' + id).classList.add('active');
+  el.classList.add('active');
+}
+function toggleCodigo(val) {
+  document.getElementById('codigo-wrap').style.display = (val === 'professor' || val === 'coordenador') ? 'block' : 'none';
+}
+function showLogin() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app-screen').style.display = 'none';
+}
+</script>
+
+<!-- UI update integrado no módulo principal -->
+
+
+<!-- MODAL: EDITAR USUÁRIO -->
+<div class="modal-overlay" id="modalEditarUsuario">
+  <div class="modal">
+    <div class="modal-title">✏️ Editar Usuário <button class="mclose" onclick="closeModal('modalEditarUsuario')">×</button></div>
+    <input type="hidden" id="edit-uid">
+    <div class="fg" style="margin-bottom:.5rem">
+      <label>Tipo</label>
+      <div id="edit-tipo" style="font-size:.875rem;padding:.3rem 0;font-weight:600;color:var(--g)"></div>
+    </div>
+    <div class="fg" style="margin-bottom:.5rem">
+      <label>E-mail (não pode ser alterado)</label>
+      <div id="edit-email-display" style="font-size:.875rem;padding:.3rem 0;color:var(--muted)"></div>
+    </div>
+    <div class="fg"><label>Nome completo *</label><input type="text" id="edit-nome" placeholder="Nome completo"></div>
+    <div class="err" id="edit-err"></div>
+    <div class="mfooter">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modalEditarUsuario')">Cancelar</button>
+      <button class="btn btn-green btn-sm" id="btn-edit-salvar" onclick="salvarEdicaoUsuario()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: EDITAR FICHA -->
+<div class="modal-overlay" id="modalEditarFicha">
+  <div class="modal">
+    <div class="modal-title">✏️ Editar Ficha <button class="mclose" onclick="closeModal('modalEditarFicha')">×</button></div>
+    <input type="hidden" id="ef-id">
+    <div class="form-grid">
+      <div class="fg full"><label>Título Provisório *</label><input type="text" id="ef-titulo" placeholder="Título do trabalho"></div>
+      <div class="fg"><label>Tipo</label>
+        <select id="ef-tipo"><option>TCC I</option><option>TCC II</option><option>Monografia</option><option>Artigo Científico</option></select>
+      </div>
+      <div class="fg"><label>Semestre</label>
+        <select id="ef-semestre"><option>2026/1</option><option>2026/2</option><option>2027/1</option><option>2027/2</option></select>
+      </div>
+    </div>
+    <div class="err" id="ef-err"></div>
+    <div class="mfooter">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modalEditarFicha')">Cancelar</button>
+      <button class="btn btn-green btn-sm" id="btn-ef-salvar" onclick="salvarEdicaoFicha()">Salvar alterações</button>
+    </div>
+  </div>
+</div>
+
+<!-- ÁREA DE IMPRESSÃO (oculta na tela) -->
+<div id="print-area" style="display:none"></div>
+
+<!-- MODAL: EDITAR ORIENTAÇÃO -->
+<div class="modal-overlay" id="modalEditarOrientacao">
+  <div class="modal-box">
+    <div class="modal-title">✏️ Editar Orientação <button class="mclose" onclick="closeModal('modalEditarOrientacao')">×</button></div>
+    <input type="hidden" id="eo-fid">
+    <input type="hidden" id="eo-oid">
+    <div class="fg"><label>Data da reunião *</label><input type="date" id="eo-data"></div>
+    <div class="fg"><label>Modalidade *</label>
+      <select id="eo-modalidade">
+        <option value="Presencial">Presencial</option>
+        <option value="Online">Online</option>
+        <option value="Híbrida">Híbrida</option>
+      </select>
+    </div>
+    <div class="fg"><label>Assunto discutido *</label><textarea id="eo-assunto" rows="3" placeholder="Descreva os assuntos discutidos..."></textarea></div>
+    <div class="fg"><label>Encaminhamentos</label><textarea id="eo-enc" rows="3" placeholder="Descreva os encaminhamentos definidos..."></textarea></div>
+    <div class="err" id="eo-err"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modalEditarOrientacao')">Cancelar</button>
+      <button class="btn btn-green btn-sm" id="btn-eo-salvar" onclick="salvarEdicaoOrientacao()">Salvar alterações</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
